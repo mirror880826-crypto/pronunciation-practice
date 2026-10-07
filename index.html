@@ -58,9 +58,24 @@ function speechText(word){
 // Queue utterances synchronously inside the click handler. In particular, do not
 // start Safari speech from a loading timer or an onend/setTimeout callback.
 let speechRun=0,utteranceQueue=[],startTimer=null;
+let groupPlayback='idle',waitingForStart=false,rearmWatch=null;
+function updateReadButton(){
+ q('#pos-read').textContent=groupPlayback==='paused'?'Resume Reading':groupPlayback==='playing'?'Pause Reading':'Read Full Group';
+}
+function toggleGroupPlayback(){
+ if(groupPlayback==='idle')return false;
+ const synth=window.speechSynthesis;
+ if(groupPlayback==='playing'){
+  groupPlayback='paused';clearTimeout(startTimer);startTimer=null;synth.pause();
+ }else{
+  groupPlayback='playing';synth.resume();
+  if(waitingForStart&&rearmWatch)rearmWatch();
+ }
+ updateReadButton();return true;
+}
 function clearHighlight(){root.querySelectorAll('.is-speaking').forEach(e=>e.classList.remove('is-speaking'));}
 function stopReading(){
- speechRun++;clearTimeout(startTimer);startTimer=null;
+ speechRun++;clearTimeout(startTimer);startTimer=null;groupPlayback='idle';waitingForStart=false;rearmWatch=null;updateReadButton();
  const active=utteranceQueue.length;utteranceQueue=[];
  if('speechSynthesis' in window&&(active||window.speechSynthesis.speaking||window.speechSynthesis.pending))window.speechSynthesis.cancel();
  q('#pos-stop').hidden=true;clearHighlight();
@@ -81,35 +96,36 @@ function playWords(items,groupMode=false){
   stopReading();
   feedback(reason==='not-allowed'?'請再點一次單字或 Read Full Group，以允許瀏覽器播放。':'語音未能播放。請再點一次以嘗試其他英式語音；若仍無聲，請在 Safari／Chrome 直接開啟並確認媒體音量。');
  }
- function watch(){clearTimeout(startTimer);startTimer=setTimeout(()=>fail('timeout'),15000);}
+ function watch(){waitingForStart=true;clearTimeout(startTimer);if(groupPlayback!=='paused')startTimer=setTimeout(()=>fail('timeout'),15000);}
+ rearmWatch=watch;
  // Strong references prevent utterances from being collected before playback ends.
  utteranceQueue=items.filter(item=>item.word.trim()).map((item,index,all)=>{
   const u=new SpeechSynthesisUtterance(speechText(item.word));
   if(voice)u.voice=voice;
   u.lang=voice?voice.lang.replace(/_/g,'-'):'en-GB';u.rate=.92;u.pitch=1;u.volume=1;
   u.onstart=()=>{
-   if(!valid())return;clearTimeout(startTimer);clearHighlight();
+   if(!valid())return;waitingForStart=false;clearTimeout(startTimer);clearHighlight();
    if(voice)workingVoice=voiceKey(voice);
    if(item.r!==undefined){const field=body.rows[item.r]?.cells[item.c+1]?.querySelector('input');if(field)field.classList.add('is-speaking');}
    feedback(notice);
   };
   u.onend=()=>{
    if(!valid())return;clearTimeout(startTimer);
-   if(index===all.length-1){utteranceQueue=[];q('#pos-stop').hidden=true;clearHighlight();}
+   if(index===all.length-1){utteranceQueue=[];groupPlayback='idle';waitingForStart=false;rearmWatch=null;updateReadButton();q('#pos-stop').hidden=true;clearHighlight();}
    else watch();
   };
   u.onerror=e=>{if(valid())fail(e.error);};
   return u;
  });
  if(!utteranceQueue.length)return;
- q('#pos-stop').hidden=false;feedback(notice);watch();
+ groupPlayback=groupMode?'playing':'idle';updateReadButton();q('#pos-stop').hidden=false;feedback(notice);watch();
  try{
   if(synth.paused)synth.resume();
   for(const u of utteranceQueue){if(!valid())break;synth.speak(u);}
  }catch(e){fail('exception');}
 }
 function speak(word){playWords([{word}]);}
-q('#pos-read').onclick=()=>{const items=[];for(let c=0;c<5;c++)for(let r=0;r<7;r++)items.push({word:data[current][r][c].word,r,c});playWords(items,true);};
+q('#pos-read').onclick=()=>{if(toggleGroupPlayback())return;const items=[];for(let c=0;c<5;c++)for(let r=0;r<7;r++)items.push({word:data[current][r][c].word,r,c});playWords(items,true);};
 q('#pos-stop').onclick=()=>{stopReading();feedback('');};
 window.addEventListener('pagehide',stopReading);
 if('speechSynthesis' in window){
@@ -127,3 +143,4 @@ q('#pos-group').onchange=e=>{stopReading();current=e.target.value;render();};q('
 </script>
 </div>
 <footer><div><b>LEARN AT YOUR OWN PACE.</b><br>慢慢唸，反覆練習。</div><div>修改內容會嘗試儲存在目前瀏覽器。</div></footer></main></body></html>
+
